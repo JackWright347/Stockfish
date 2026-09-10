@@ -36,6 +36,7 @@
 #include "bitboard.h"
 #include "evaluate.h"
 #include "history.h"
+#include "learned_lmr.h"
 #include "misc.h"
 #include "movegen.h"
 #include "movepick.h"
@@ -1375,6 +1376,43 @@ moves_loop:  // When in check, search starts here
             // To prevent problems when the max value is less than the min value,
             // std::clamp has been replaced by a more robust implementation.
             Depth d = std::max(1, std::min(newDepth - r / 1024, newDepth + 2)) + PvNode;
+
+#ifdef EXPERIMENTAL_LEARNED_LMR
+            {
+                static const LearnedLMRModel learnedLMR;
+
+                LMRFeatures features{
+                  .depth           = depth,
+                  .moveCount       = moveCount,
+                  .reduction       = r,
+                  .statScore       = ss->statScore,
+                  .correctionValue = correctionValue,
+                  .alpha           = alpha,
+                  .eval            = eval,
+                  .pvNode          = PvNode,
+                  .cutNode         = cutNode,
+                  .allNode         = allNode,
+                  .improving       = improving,
+                  .ttMove          = bool(ttData.move),
+                  .ttCapture       = ttCapture,
+                  .capture         = capture,
+                  .givesCheck      = givesCheck,
+                };
+
+                if (learnedLMR.confident(features))
+                    switch (learnedLMR.predict(features))
+                    {
+                    case LearnedLMRAction::Keep:
+                        break;
+                    case LearnedLMRAction::ReduceLess:
+                        d = std::min(d + 1, newDepth);
+                        break;
+                    case LearnedLMRAction::NoReduction:
+                        d = newDepth;
+                        break;
+                    }
+            }
+#endif
 
             ss->reduction = newDepth - d;
             value         = -search<NonPV>(pos, ss + 1, -(alpha + 1), -alpha, d, true);
