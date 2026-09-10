@@ -23,6 +23,7 @@
 #include <utility>
 
 #include "bitboard.h"
+#include "learned_moveorder.h"
 #include "misc.h"
 #include "position.h"
 
@@ -249,6 +250,32 @@ ExtMove* MovePicker::score(const MoveList<Type>& ml) {
 
             if (ply < LOW_PLY_HISTORY_SIZE)
                 value += 8 * (*lowPlyHistory)[ply][m.raw()] / (1 + ply);
+
+#ifdef EXPERIMENTAL_LEARNED_MOVEORDER
+            {
+                static const LearnedMoveOrderModel learnedMoveOrder;
+
+                MoveOrderFeatures features{
+                  .historyScore = value,
+                  .ply          = ply,
+                  .givesCheck   = bool(pos.check_squares(pt) & to),
+                  .threatened   = bool(threatByLesser[pt] & to),
+                };
+
+                if (learnedMoveOrder.confident(features))
+                    switch (learnedMoveOrder.predict(features))
+                    {
+                    case LearnedMoveOrderAction::Keep:
+                        break;
+                    case LearnedMoveOrderAction::PromoteSlightly:
+                        value += MoveOrderCorrectionUnit;
+                        break;
+                    case LearnedMoveOrderAction::DemoteSlightly:
+                        value -= MoveOrderCorrectionUnit;
+                        break;
+                    }
+            }
+#endif
 
             m.value = value;
         }
