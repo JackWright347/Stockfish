@@ -36,6 +36,7 @@
 #include "bitboard.h"
 #include "evaluate.h"
 #include "history.h"
+#include "learned_aspiration.h"
 #include "misc.h"
 #include "movegen.h"
 #include "movepick.h"
@@ -375,6 +376,34 @@ bool Search::Worker::iterative_deepening() {
             // Reset aspiration window starting size
             delta     = 5 + threadIdx % 8 + std::abs(rootMoves[pvIdx].meanSquaredScore) / 10193;
             Value avg = rootMoves[pvIdx].averageScore;
+
+#ifdef EXPERIMENTAL_LEARNED_ASPIRATION
+            {
+                static const LearnedAspirationModel learnedAspiration;
+
+                AspirationFeatures features{
+                  .delta                 = delta,
+                  .avg                   = avg,
+                  .rootDepth             = rootDepth,
+                  .multiPV               = int(multiPV),
+                  .previousTimeReduction = mainThread ? mainThread->previousTimeReduction : 1.0,
+                };
+
+                if (learnedAspiration.confident(features))
+                    switch (learnedAspiration.predict(features))
+                    {
+                    case LearnedAspirationAction::Keep:
+                        break;
+                    case LearnedAspirationAction::Narrower:
+                        delta = std::max(1, delta / 2);
+                        break;
+                    case LearnedAspirationAction::Wider:
+                        delta *= 2;
+                        break;
+                    }
+            }
+#endif
+
             alpha     = std::max(avg - delta, -VALUE_INFINITE);
             beta      = std::min(avg + delta, VALUE_INFINITE);
 
