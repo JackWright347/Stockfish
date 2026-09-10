@@ -36,6 +36,7 @@
 #include "bitboard.h"
 #include "evaluate.h"
 #include "history.h"
+#include "learned_lmr_continuation.h"
 #include "misc.h"
 #include "movegen.h"
 #include "movepick.h"
@@ -1386,8 +1387,48 @@ moves_loop:  // When in check, search starts here
             {
                 // Adjust full-depth search based on LMR results - if the result was
                 // good enough search deeper, if it was bad enough search shallower.
-                const bool doDeeperSearch    = d < newDepth && value > bestValue + 53;
-                const bool doShallowerSearch = value < bestValue + 8;
+                bool doDeeperSearch    = d < newDepth && value > bestValue + 53;
+                bool doShallowerSearch = value < bestValue + 8;
+
+#ifdef EXPERIMENTAL_LEARNED_LMR_CONTINUATION
+                {
+                    static const LearnedLMRContinuationModel learnedLMRContinuation;
+
+                    LMRContinuationFeatures features{
+                      .depth        = depth,
+                      .newDepth     = newDepth,
+                      .reducedDepth = d,
+                      .moveCount    = moveCount,
+                      .reducedValue = value,
+                      .bestValue    = bestValue,
+                      .alpha        = alpha,
+                      .pvNode       = PvNode,
+                      .cutNode      = cutNode,
+                    };
+
+                    if (learnedLMRContinuation.confident(features))
+                        switch (learnedLMRContinuation.predict(features))
+                        {
+                        case LearnedLMRContinuationAction::Keep:
+                            break;
+                        case LearnedLMRContinuationAction::StopMove:
+                            doDeeperSearch = doShallowerSearch = false;
+                            break;
+                        case LearnedLMRContinuationAction::ResearchNormalDepth:
+                            doDeeperSearch = doShallowerSearch = false;
+                            newDepth       = depth - 1;
+                            break;
+                        case LearnedLMRContinuationAction::ResearchDeeper:
+                            doDeeperSearch    = true;
+                            doShallowerSearch = false;
+                            break;
+                        case LearnedLMRContinuationAction::ResearchShallower:
+                            doDeeperSearch    = false;
+                            doShallowerSearch = true;
+                            break;
+                        }
+                }
+#endif
 
                 newDepth += doDeeperSearch - doShallowerSearch;
 
